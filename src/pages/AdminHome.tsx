@@ -1,5 +1,5 @@
 import React from "react";
-import NavBar from "../components/NavBar";
+import NavBar from "./UserHome/components/NavBar";
 const AdminHome: React.FC = () => {
   return (
     <div>
