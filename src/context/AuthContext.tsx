@@ -1,6 +1,7 @@
 import React, { ReactNode, useContext, createContext, useEffect, useState } from "react";
-import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
-import { auth } from "../firebase";
+import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User, OAuthCredential } from "firebase/auth";
+import { auth, db } from "../firebase";
+import { collection, addDoc, getDocs, query, where } from "firebase/firestore";
 
 interface AuthContextType {
     googleSignIn: () => void;
@@ -27,7 +28,55 @@ export const AuthContextProvider = ({ children }: AuthContextProviderProps) => {
             const user = result.user;
 
             if (user.email && user.email.endsWith(ALLOWED_DOMAIN)) {
-                console.log("User signed in:", user);
+                const usersRef = collection(db, "users");
+                const userQuery = query(usersRef, where("email", "==", user.email));
+                const querySnapshot = await getDocs(userQuery);
+
+                const fullName: string = user.displayName || "";
+                const nameParts: string[] = fullName.split(",").map(part => part.trim());
+                const firstName: string = nameParts.length > 1 ? nameParts[1] : (nameParts[0] || "").split(" ")[0];
+                const lastName: string = nameParts.length > 1 ? nameParts[0] : nameParts[0].split(" ").slice(1).join(" ");
+
+                if (querySnapshot.empty) {
+                    try {
+                        await addDoc(usersRef, {
+                            OAuthID: user.uid,
+                            dateCreated: new Date(),
+                            email: user.email,
+                            firstName: firstName,
+                            lastName: lastName,
+                            roleID: "/roles/role2",
+                            userID: user.uid,
+                            userName: fullName || ""
+                        });
+                        console.log("New user added to database:", user.email);
+                    } catch (dbError) {
+                        console.error("Error adding new user:", dbError);
+                        await signOut(auth);
+                        alert("Error signing up. Please try again.");
+                        throw dbError;
+                    }
+                } else {
+                    console.log("User already exists:", user.email);
+                }
+
+                const tokenID = await user.getIdToken();
+                const credential = GoogleAuthProvider.credentialFromResult(result) as OAuthCredential;
+                const accessToken = credential?.accessToken;
+                const expirationDate = new Date();
+                expirationDate.setSeconds(expirationDate.getSeconds() + 3600);
+                const refreshToken = crypto.randomUUID();
+
+                const oauthRef = collection(db, "oauth");
+                await addDoc(oauthRef, {
+                    userID: user.uid,
+                    accessToken: accessToken,
+                    tokenID: tokenID,
+                    expDate: expirationDate,
+                    refreshToken: refreshToken,
+                });
+                console.log("OAuth tokens stored in database");
+
                 setErrorMessage(null);
             } else {
                 console.error("Unauthorized sign-up attempt:", user.email);
@@ -39,6 +88,7 @@ export const AuthContextProvider = ({ children }: AuthContextProviderProps) => {
             return result;
         } catch (error) {
             console.error(error);
+            setErrorMessage("Error during Google sign-in. Please try again.");
             throw error;
         }
     };
